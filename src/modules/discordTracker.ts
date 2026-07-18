@@ -24,6 +24,7 @@ interface ReportData {
     shouldUpdateStatus: boolean;
     onSubmit?(report: ReportData, data: any): void;
     submitCount: number;
+    prNumber?: string;
 }
 
 export const DefaultReporterBranch = "dev";
@@ -37,7 +38,8 @@ const pendingReports = new TTLMap<string, ReportData>(
     })
 );
 
-export async function triggerReportWorkflow({ ref, inputs }: { ref: string, inputs: { discord_branch: Branch; webhook_url?: string; }; }) {
+
+export async function triggerReportWorkflow({ ref, inputs }: { ref: string, inputs: { discord_branch: Branch; webhook_url?: string; pr_repo?: string; pr_branch?: string; }; }) {
     return await doFetch("https://api.github.com/repos/Vendicated/Vencord/actions/workflows/reportBrokenPlugins.yml/dispatches", {
         method: "POST",
         headers: {
@@ -77,14 +79,16 @@ async function checkVersions() {
     }
 }
 
-type Options = Partial<Pick<ReportData, "shouldLog" | "shouldUpdateStatus" | "onSubmit">> & { ref?: string; };
+type Options = Partial<Pick<ReportData, "shouldLog" | "shouldUpdateStatus" | "onSubmit">> & { ref?: string; pr?: { repo: string; branch: string; }; prNumber?: string; };
 
 export async function testDiscordVersion<B extends Branch>(branch: B, hash: Record<B extends "both" ? "stable" | "canary" : B, string>, options: Options = {}) {
     const {
         shouldLog = true,
         shouldUpdateStatus = true,
         ref = DefaultReporterBranch,
-        onSubmit
+        onSubmit,
+        pr,
+        prNumber
     } = options;
 
     const runId = randomUUID();
@@ -95,14 +99,16 @@ export async function testDiscordVersion<B extends Branch>(branch: B, hash: Reco
         shouldLog,
         shouldUpdateStatus,
         onSubmit,
-        submitCount: 0
+        submitCount: 0,
+        prNumber
     });
 
     await triggerReportWorkflow({
         ref,
         inputs: {
             discord_branch: branch,
-            webhook_url: `${Config.httpServer.domain}/reporter/webhook?runId=${runId}`
+            webhook_url: `${Config.httpServer.domain}/reporter/webhook?runId=${runId}`,
+            ...(pr && { pr_repo: pr.repo, pr_branch: pr.branch })
         }
     });
 }
@@ -161,7 +167,7 @@ async function handleReportSubmit(report: ReportData, data: any) {
         ? BotState.discordTracker!.canaryHash
         : BotState.discordTracker!.stableHash;
 
-    if (!report.shouldUpdateStatus || latestHash !== report.hash[report.branch]) {
+    if (!report.shouldUpdateStatus || latestHash !== report.hash[report.branch] || report.prNumber) {
         return;
     }
 
